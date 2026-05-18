@@ -38,7 +38,7 @@ https://github.com/mrkhachaturov/xAITTSKit.git
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/mrkhachaturov/xAITTSKit.git", from: "0.1.0"),
+    .package(url: "https://github.com/mrkhachaturov/xAITTSKit.git", from: "0.2.0"),
 ]
 ```
 
@@ -200,10 +200,77 @@ do {
 - For longer content, split by paragraph or switch to the xAI WebSocket TTS
   endpoint (not yet covered by this kit — see roadmap)
 
+## WebSocket Streaming (v0.2.0+)
+
+For real-time, multi-turn synthesis use `xAITTSWebSocketSession`. The connection
+stays open after each `audio.done` — send the next turn's text without
+reconnecting. Lowest time-to-first-audio when paired with
+`optimizeStreamingLatency: 1`.
+
+### Single utterance (drop-in compatible with `xAITTSClient.stream`)
+
+```swift
+let stream = xAITTSWebSocketSession.synthesize(
+    text: "Hello from the WebSocket.",
+    configuration: .init(
+        bearer: "<xai-bearer>",
+        language: .en,
+        voice: .eve,
+        codec: .pcm,
+        sampleRate: 24_000,
+        optimizeStreamingLatency: 1
+    )
+)
+
+for try await audioChunk in stream {
+    player.enqueue(audioChunk)
+}
+```
+
+### Multi-turn session
+
+```swift
+let session = try await xAITTSWebSocketSession.open(
+    configuration: .init(
+        bearer: "<xai-bearer>",
+        language: .en,
+        voice: .ara,
+        codec: .mp3,
+        textNormalization: true
+    )
+)
+
+// Turn 1
+try await session.send("Hello — first response.")
+try await session.endTurn()
+
+// Turn 2 — same connection
+try await session.send("And here's the second response.")
+try await session.endTurn()
+
+for try await event in session.events {
+    switch event {
+    case .audio(let bytes): player.enqueue(bytes)
+    case .audioDone(let traceId): print("turn complete, trace=\(traceId ?? "?")")
+    case .error(let message): print("server error: \(message)")
+    }
+}
+
+await session.close()
+```
+
+### Auth on Apple platforms
+
+`URLSessionWebSocketTask` strips the `Authorization` header during the HTTP→WS
+upgrade on Apple platforms. The session therefore authenticates via
+`Sec-WebSocket-Protocol: xai-client-secret.<bearer>` — same workaround the xAI
+iOS cookbook uses for `/v1/tts` and `/v1/realtime`. No action required from
+callers; just pass the bearer to the configuration.
+
 ## Roadmap
 
-- `v0.2.0` — WebSocket streaming TTS (`wss://api.x.ai/v1/tts`), `optimize_streaming_latency`, `text_normalization`
 - `v0.3.0` — Voice listing (`GET /v1/tts/voices`) so custom voices can be enumerated
+- `v0.4.0` — AVAudioPCMBuffer helpers for AVAudioEngine playback when `codec: .pcm`
 
 ## Contributing
 
