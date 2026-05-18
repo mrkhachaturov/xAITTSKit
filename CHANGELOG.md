@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 — nonisolated audio helpers, drain-without-polling
+
+- Drop `@MainActor` from `xAITTSAudioOutputPlayer.attach` / `start` / `play` / `interrupt` / `stop`. Callable from any isolation domain, matching `AVAudioEngine`'s own contract — no forced main-thread hop when bootstrapping audio off-main.
+- `waitForPlaybackToDrain()` is now backed by `CheckedContinuation` waiters resumed from the `.dataPlayedBack` callback. No polling, no `pollIntervalMillis` knob. `interrupt()` and `stop()` also wake pending waiters so they don't hang.
+
 ## 0.3.0 — AVAudio output player
 
 - Add `xAITTSAudioOutputPlayer` for playing back streamed TTS audio:

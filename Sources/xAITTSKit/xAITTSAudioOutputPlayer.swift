@@ -28,7 +28,12 @@ public final class xAITTSAudioOutputPlayer: @unchecked Sendable {
     private weak var attachedEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var containerPlayer: AVAudioPlayer?
-    private let pending = OSAllocatedUnfairLock<Int>(initialState: 0)
+
+    private struct PlaybackState {
+        var pending: Int = 0
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+    private let state = OSAllocatedUnfairLock<PlaybackState>(initialState: .init())
 
     public init(pcmSampleRate: Double = defaultPCMSampleRate) {
         self.pcmSampleRate = pcmSampleRate
@@ -44,7 +49,9 @@ public final class xAITTSAudioOutputPlayer: @unchecked Sendable {
 
     /// Attach an `AVAudioPlayerNode` to the engine's main mixer. Call before
     /// `engine.start()`. Required for ``play(pcm16Bytes:)``.
-    @MainActor
+    ///
+    /// Callable from any isolation domain — matches `AVAudioEngine`'s own
+    /// contract. Don't call `attach` / `stop` concurrently.
     public func attach(to engine: AVAudioEngine) {
         let player = AVAudioPlayerNode()
         engine.attach(player)
@@ -53,7 +60,6 @@ public final class xAITTSAudioOutputPlayer: @unchecked Sendable {
         self.attachedEngine = engine
     }
 
-    @MainActor
     public func start() {
         guard let player = playerNode, !player.isPlaying else { return }
         player.play()
@@ -62,7 +68,6 @@ public final class xAITTSAudioOutputPlayer: @unchecked Sendable {
     /// Schedule a raw PCM16 buffer (Int16 little-endian, mono, at the
     /// configured sample rate) for playback. Use with `xAITTSClient.stream(...,
     /// format: .pcm, sampleRate: 24_000)`.
-    @MainActor
     public func play(pcm16Bytes: Data) {
         guard let player = playerNode,
               let engine = attachedEngine,
@@ -80,26 +85,44 @@ public final class xAITTSAudioOutputPlayer: @unchecked Sendable {
                 floats[i] = Float(src[i]) / Float(Int16.max)
             }
         }
-        pending.withLock { $0 += 1 }
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [pending] _ in
-            pending.withLock { $0 = max(0, $0 - 1) }
+        state.withLock { $0.pending += 1 }
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [state] _ in
+            let waiters = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+                s.pending = max(0, s.pending - 1)
+                guard s.pending == 0 else { return [] }
+                let w = s.waiters
+                s.waiters.removeAll()
+                return w
+            }
+            for w in waiters { w.resume() }
         }
         if !player.isPlaying { player.play() }
     }
 
     /// Cancel pending PCM playback and re-prime the player.
-    @MainActor
     public func interrupt() {
         playerNode?.stop()
-        pending.withLock { $0 = 0 }
+        let waiters = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.pending = 0
+            let w = s.waiters
+            s.waiters.removeAll()
+            return w
+        }
+        for w in waiters { w.resume() }
         playerNode?.play()
     }
 
     /// Returns once every scheduled PCM buffer has been consumed by the
-    /// output hardware. Useful before tearing down the engine.
-    public func waitForPlaybackToDrain(pollIntervalMillis: Int = 50) async {
-        while pending.withLock({ $0 > 0 }) {
-            try? await Task.sleep(for: .milliseconds(pollIntervalMillis))
+    /// output hardware. Backed by the `.dataPlayedBack` completion callback
+    /// — no polling. Useful before tearing down the engine.
+    public func waitForPlaybackToDrain() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumeImmediately = state.withLock { s -> Bool in
+                guard s.pending > 0 else { return true }
+                s.waiters.append(continuation)
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
         }
     }
 
@@ -124,12 +147,17 @@ public final class xAITTSAudioOutputPlayer: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    @MainActor
     public func stop() {
         playerNode?.stop()
         playerNode = nil
         attachedEngine = nil
-        pending.withLock { $0 = 0 }
+        let waiters = state.withLock { s -> [CheckedContinuation<Void, Never>] in
+            s.pending = 0
+            let w = s.waiters
+            s.waiters.removeAll()
+            return w
+        }
+        for w in waiters { w.resume() }
         stopContainer()
     }
 }
