@@ -1,9 +1,8 @@
 //
 //  xAITTSVoice.swift
 //  Built-in xAI Grok TTS voices, output formats, and supported languages.
-//  Source: https://docs.x.ai/docs/text-to-speech (also mirrored at
-//  openclaw-xai-speech/docs/tts.md) and the live voice library at
-//  https://console.x.ai/team/default/voice/voice-library.
+//  Source: https://docs.x.ai/docs/text-to-speech and the live voice library
+//  at https://console.x.ai/team/default/voice/voice-library.
 //
 
 import Foundation

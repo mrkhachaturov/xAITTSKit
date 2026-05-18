@@ -13,7 +13,7 @@ public actor xAITTSClient {
 
     public struct Configuration: Sendable {
         public var baseURL: URL
-        public var bearer: String                  // OAuth bearer (gateway-provided) or API key
+        public var bearer: String                  // xAI API key or OAuth bearer
         public var defaultVoice: xAITTSVoice
         public var defaultFormat: xAITTSFormat
         public var defaultLanguage: xAITTSLanguage

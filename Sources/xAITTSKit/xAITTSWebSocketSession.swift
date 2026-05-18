@@ -117,9 +117,7 @@ public actor xAITTSWebSocketSession {
     ///
     /// Auth is passed via `Sec-WebSocket-Protocol` (`xai-client-secret.<bearer>`)
     /// because `URLSessionWebSocketTask` strips the `Authorization` header during
-    /// the HTTP→WebSocket upgrade on Apple platforms. The xAI iOS cookbook
-    /// (`build/xai-cookbook/iOS/VoiceTesterApp/.../StreamingTTSView.swift`) and
-    /// the Voice Agent sample both use the same workaround.
+    /// the HTTP→WebSocket upgrade on Apple platforms.
     public static func open(
         configuration: Configuration,
         session: URLSession? = nil
